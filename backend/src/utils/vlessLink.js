@@ -25,11 +25,14 @@ function supportsFlow(inbound) {
 
 function describeInbound(inbound) {
   const stream = inbound.streamSettings || {};
+  const rs = stream.realitySettings || {};
   return {
     port: inbound.port,
     tag: inbound.tag || null,
     network: stream.network || 'tcp',
     security: stream.security || 'none',
+    serverNames: Array.isArray(rs.serverNames) ? rs.serverNames : [],
+    dest: rs.dest || null,
   };
 }
 
@@ -82,8 +85,14 @@ function buildVlessLink({ client, inbound, serverAddress, publicKey, defaultFlow
   if (security === 'reality') {
     const rs = stream.realitySettings || {};
     parts.push(['fp', rs.fingerprint || 'chrome']);
-    const sni = (Array.isArray(rs.serverNames) && rs.serverNames[0]) || rs.dest || '';
-    if (sni) parts.push(['sni', String(sni).replace(/:\d+$/, '')]);
+    const allowed = Array.isArray(rs.serverNames) ? rs.serverNames.map((n) => String(n).replace(/:\d+$/, '')) : [];
+    // Prefer the client's chosen data-pack SNI when the server allows it.
+    const preferred = client.sni ? String(client.sni).replace(/:\d+$/, '') : '';
+    const sni =
+      (preferred && allowed.includes(preferred) && preferred) ||
+      allowed[0] ||
+      (rs.dest ? String(rs.dest).replace(/:\d+$/, '') : '');
+    if (sni) parts.push(['sni', sni]);
     if (!publicKey) {
       throw new Error('Failed to derive Reality public key (pbk) from privateKey in config.json');
     }

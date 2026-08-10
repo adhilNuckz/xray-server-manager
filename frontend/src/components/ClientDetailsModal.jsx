@@ -14,6 +14,7 @@ export default function ClientDetailsModal({ open, onClose, client }) {
         <Field label="Name" value={client.name} />
         <Field label="Email / identifier" value={client.email} />
         <Field label="UUID" value={client.id} mono />
+        <Field label="Data pack / SNI" value={client.sni || 'Default (first server name)'} mono />
         <Field label="Flow" value={client.flow || 'none'} />
         <Field label="Created" value={formatDate(client.created_at)} />
         <Field label="Expiration" value={client.expires_at ? formatDateOnly(client.expires_at) : 'Never'} />

@@ -34,6 +34,14 @@ function isValidFlow(value) {
   return ['xtls-rprx-vision', 'none', ''].includes(value);
 }
 
+// Hostname / SNI used for Reality data-pack domains (e.g. support.zoom.us).
+const SNI_RE = /^(?=.{1,253}$)([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
+
+function isValidSni(value) {
+  if (value === '' || value === null || value === undefined) return true; // optional; falls back to default
+  return typeof value === 'string' && SNI_RE.test(value.trim().toLowerCase());
+}
+
 function isPlainObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -45,5 +53,6 @@ module.exports = {
   sanitizeName,
   isSafeName,
   isValidFlow,
+  isValidSni,
   isPlainObject,
 };

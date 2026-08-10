@@ -6,7 +6,9 @@ import api from '../services/api';
 
 function inboundLabel(l) {
   const security = l.security === 'reality' ? 'Reality' : l.security === 'tls' ? 'TLS' : l.security;
-  return `${security} · ${l.network.toUpperCase()} · port ${l.port}`;
+  const pack = l.packMatch ? ' ★' : '';
+  const sniBit = l.security === 'reality' && l.sni ? ` · ${l.sni}` : '';
+  return `${security} · ${l.network.toUpperCase()} · :${l.port}${sniBit}${pack}`;
 }
 
 export default function VlessLinkModal({ open, onClose, client }) {
@@ -82,9 +84,16 @@ export default function VlessLinkModal({ open, onClose, client }) {
             </div>
           </div>
           <p className="text-xs text-surface-500">
-            {links.length > 1
-              ? 'This server exposes multiple VLESS inbounds for this client - pick whichever connection works best on your network.'
-              : 'Scan the QR code with a VLESS-compatible client, or paste the link directly into the app.'}
+            {active.security === 'reality' && active.sni ? (
+              <>
+                Reality link uses SNI <span className="font-mono text-surface-300">{active.sni}</span> for this
+                client&apos;s data pack.
+              </>
+            ) : links.length > 1 ? (
+              'This server exposes multiple VLESS inbounds for this client - pick whichever connection works best on your network.'
+            ) : (
+              'Scan the QR code with a VLESS-compatible client, or paste the link directly into the app.'
+            )}
           </p>
         </div>
       )}

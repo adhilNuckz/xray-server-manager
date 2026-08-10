@@ -3,18 +3,18 @@ const db = require('../database/db');
 const env = require('../config/env');
 const xrayConfig = require('./xrayConfig.service');
 const { findVlessInbounds, supportsFlow, describeInbound, buildVlessLink } = require('../utils/vlessLink');
-const { isValidEmail, isValidDate, isValidUUID } = require('../utils/validators');
+const { isValidEmail, isValidDate, isValidUUID, isValidSni } = require('../utils/validators');
 const settingsService = require('./settings.service');
 
 const nowIso = () => new Date().toISOString();
 
 const stmts = {
   insert: db.prepare(`
-    INSERT INTO clients (id, name, email, flow, notes, enabled, expires_at, created_at, updated_at, imported)
-    VALUES (@id, @name, @email, @flow, @notes, @enabled, @expires_at, @created_at, @updated_at, @imported)
+    INSERT INTO clients (id, name, email, flow, notes, sni, enabled, expires_at, created_at, updated_at, imported)
+    VALUES (@id, @name, @email, @flow, @notes, @sni, @enabled, @expires_at, @created_at, @updated_at, @imported)
   `),
   update: db.prepare(`
-    UPDATE clients SET name=@name, email=@email, flow=@flow, notes=@notes,
+    UPDATE clients SET name=@name, email=@email, flow=@flow, notes=@notes, sni=@sni,
       expires_at=@expires_at, updated_at=@updated_at WHERE id=@id
   `),
   setEnabled: db.prepare(`UPDATE clients SET enabled=@enabled, updated_at=@updated_at WHERE id=@id`),
@@ -23,6 +23,20 @@ const stmts = {
   getByEmail: db.prepare(`SELECT * FROM clients WHERE email=?`),
   all: db.prepare(`SELECT * FROM clients ORDER BY created_at DESC`),
 };
+
+function normalizeClientSni(sni) {
+  if (sni === undefined || sni === null || sni === '') return '';
+  if (!isValidSni(sni)) throw Object.assign(new Error('Invalid data pack / server name (SNI)'), { status: 400 });
+  const cleaned = String(sni).trim().toLowerCase().replace(/:\d+$/, '');
+  const allowed = settingsService.getRealityServerNames();
+  if (cleaned && !allowed.includes(cleaned)) {
+    throw Object.assign(
+      new Error(`SNI "${cleaned}" is not in the allowed Reality server names. Add it in Settings first.`),
+      { status: 400 }
+    );
+  }
+  return cleaned;
+}
 
 function computeStatus(client) {
   if (!client.enabled) return 'DISABLED';
@@ -86,6 +100,7 @@ function importFromXrayConfig() {
       email: c.email || `${c.id.slice(0, 8)}@imported.local`,
       flow: c.flow || '',
       notes: 'Auto-imported from existing Xray configuration',
+      sni: '',
       enabled: 1,
       expires_at: null,
       created_at: ts,
@@ -115,6 +130,7 @@ function reconcileFromConfig() {
         email: c.email || `${c.id.slice(0, 8)}@imported.local`,
         flow: c.flow || '',
         notes: 'Auto-imported after external configuration change',
+        sni: '',
         enabled: 1,
         expires_at: null,
         created_at: ts,
@@ -203,12 +219,14 @@ async function applyClientsToConfig() {
   return result;
 }
 
-async function createClient({ name, email, expires_at, notes, flow }) {
+async function createClient({ name, email, expires_at, notes, flow, sni }) {
   if (!isValidEmail(email)) throw Object.assign(new Error('Invalid email/identifier'), { status: 400 });
   if (!isValidDate(expires_at)) throw Object.assign(new Error('Invalid expiration date'), { status: 400 });
   if (stmts.getByEmail.get(email)) throw Object.assign(new Error('A client with this email already exists'), { status: 409 });
 
   const defaultFlow = settingsService.get('default_flow', 'xtls-rprx-vision');
+  const allowed = settingsService.getRealityServerNames();
+  const resolvedSni = normalizeClientSni(sni !== undefined ? sni : allowed[0] || '');
   const id = crypto.randomUUID();
   const ts = nowIso();
   const row = {
@@ -217,6 +235,7 @@ async function createClient({ name, email, expires_at, notes, flow }) {
     email,
     flow: flow !== undefined ? flow : defaultFlow,
     notes: notes || '',
+    sni: resolvedSni,
     enabled: 1,
     expires_at: expires_at || null,
     created_at: ts,
@@ -249,6 +268,7 @@ async function updateClient(id, patch) {
     email: patch.email !== undefined ? patch.email : existing.email,
     flow: patch.flow !== undefined ? patch.flow : existing.flow,
     notes: patch.notes !== undefined ? patch.notes : existing.notes,
+    sni: patch.sni !== undefined ? normalizeClientSni(patch.sni) : existing.sni || '',
     expires_at: patch.expires_at !== undefined ? patch.expires_at || null : existing.expires_at,
     updated_at: nowIso(),
   };
@@ -263,7 +283,16 @@ async function updateClient(id, patch) {
   try {
     await applyClientsToConfig();
   } catch (err) {
-    stmts.update.run({ ...existing, id }); // rollback
+    stmts.update.run({
+      id: existing.id,
+      name: existing.name,
+      email: existing.email,
+      flow: existing.flow,
+      notes: existing.notes,
+      sni: existing.sni || '',
+      expires_at: existing.expires_at,
+      updated_at: existing.updated_at,
+    });
     throw err;
   }
   return getClient(id);
@@ -289,7 +318,7 @@ async function deleteClient(id) {
   try {
     await applyClientsToConfig();
   } catch (err) {
-    stmts.insert.run(existing); // rollback
+    stmts.insert.run({ ...existing, sni: existing.sni || '', notes: existing.notes || '' }); // rollback
     throw err;
   }
   return true;
@@ -325,25 +354,41 @@ async function getVlessLink(id) {
     inbounds.map(async (inbound) => {
       let publicKey = null;
       const security = inbound.streamSettings && inbound.streamSettings.security;
+      const rs = inbound.streamSettings && inbound.streamSettings.realitySettings;
+      const allowed = rs && Array.isArray(rs.serverNames) ? rs.serverNames : [];
       if (security === 'reality') {
-        const priv = inbound.streamSettings.realitySettings && inbound.streamSettings.realitySettings.privateKey;
+        const priv = rs && rs.privateKey;
         publicKey = await xrayConfig.getRealityPublicKey(priv);
       }
+      const preferred = client.sni || '';
+      const inboundSni =
+        security === 'reality'
+          ? (preferred && allowed.includes(preferred) ? preferred : allowed[0] || null)
+          : null;
+      // Build link with an effective client SNI for THIS inbound so each
+      // Reality pack link uses a name that belongs to that inbound.
+      const linkClient =
+        security === 'reality' && inboundSni ? { ...client, sni: inboundSni } : client;
       return {
         ...describeInbound(inbound),
-        link: buildVlessLink({ client, inbound, serverAddress, publicKey, defaultFlow }),
+        packMatch: Boolean(preferred && allowed.includes(preferred)),
+        link: buildVlessLink({ client: linkClient, inbound, serverAddress, publicKey, defaultFlow }),
+        sni: inboundSni,
       };
     })
   );
 
-  // Reality first — that is the primary share link most clients need.
+  // Preferred order: Reality inbound matching the client's data-pack SNI,
+  // then other Reality inbounds, then WS/TLS fallbacks.
   links.sort((a, b) => {
+    if (a.packMatch && !b.packMatch) return -1;
+    if (b.packMatch && !a.packMatch) return 1;
     if (a.security === 'reality' && b.security !== 'reality') return -1;
     if (b.security === 'reality' && a.security !== 'reality') return 1;
     return (a.port || 0) - (b.port || 0);
   });
 
-  return { links, status: computeStatus(client) };
+  return { links, status: computeStatus(client), packSni: client.sni || null };
 }
 
 module.exports = {

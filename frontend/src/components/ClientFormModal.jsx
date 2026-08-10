@@ -1,26 +1,52 @@
 import { useEffect, useState } from 'react';
 import Modal from './Modal';
+import api from '../services/api';
 
-const emptyForm = { name: '', email: '', expires_at: '', notes: '', flow: 'xtls-rprx-vision' };
+const emptyForm = { name: '', email: '', expires_at: '', notes: '', flow: 'xtls-rprx-vision', sni: '' };
 
 export default function ClientFormModal({ open, onClose, onSubmit, initial, saving }) {
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState('');
+  const [packs, setPacks] = useState([]);
   const isEdit = Boolean(initial);
 
   useEffect(() => {
     if (open) {
-      setForm(
-        initial
-          ? {
-              name: initial.name || '',
-              email: initial.email || '',
-              expires_at: initial.expires_at || '',
-              notes: initial.notes || '',
-              flow: initial.flow || 'xtls-rprx-vision',
-            }
-          : emptyForm
-      );
+      api
+        .get('/settings')
+        .then((res) => {
+          const list = res.data.settings.reality_inbounds || [];
+          setPacks(list);
+          const defaultSni = list[0]?.serverNames?.[0] || '';
+          const currentSni = initial?.sni || defaultSni;
+          setForm(
+            initial
+              ? {
+                  name: initial.name || '',
+                  email: initial.email || '',
+                  expires_at: initial.expires_at || '',
+                  notes: initial.notes || '',
+                  flow: initial.flow || 'xtls-rprx-vision',
+                  sni: currentSni,
+                }
+              : { ...emptyForm, sni: defaultSni }
+          );
+        })
+        .catch(() => {
+          setPacks([]);
+          setForm(
+            initial
+              ? {
+                  name: initial.name || '',
+                  email: initial.email || '',
+                  expires_at: initial.expires_at || '',
+                  notes: initial.notes || '',
+                  flow: initial.flow || 'xtls-rprx-vision',
+                  sni: initial.sni || '',
+                }
+              : emptyForm
+          );
+        });
       setError('');
     }
   }, [open, initial]);
@@ -36,6 +62,8 @@ export default function ClientFormModal({ open, onClose, onSubmit, initial, savi
       setError(err.response?.data?.error || 'Failed to save client');
     }
   };
+
+  const selectedPack = packs.find((p) => (p.serverNames || []).includes(form.sni));
 
   return (
     <Modal
@@ -69,6 +97,30 @@ export default function ClientFormModal({ open, onClose, onSubmit, initial, savi
             disabled={isEdit && initial?.imported}
           />
         </div>
+        <div>
+          <label className="label">Data pack (Reality inbound)</label>
+          <select
+            className="input"
+            value={form.sni}
+            onChange={handleChange('sni')}
+            required={packs.length > 0}
+          >
+            {packs.length === 0 && <option value="">No Reality packs configured</option>}
+            {packs.flatMap((p) =>
+              (p.serverNames || []).map((sni) => (
+                <option key={`${p.id}-${sni}`} value={sni}>
+                  {p.label} — port {p.port} — {sni}
+                </option>
+              ))
+            )}
+          </select>
+          {selectedPack && (
+            <p className="text-xs text-surface-500 mt-1">
+              Link will use port <span className="font-mono text-surface-300">{selectedPack.port}</span>, dest{' '}
+              <span className="font-mono text-surface-300">{selectedPack.dest}</span>
+            </p>
+          )}
+        </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="label">Expiration date (optional)</label>
@@ -86,9 +138,6 @@ export default function ClientFormModal({ open, onClose, onSubmit, initial, savi
           <label className="label">Notes (optional)</label>
           <textarea className="input min-h-[70px]" value={form.notes} onChange={handleChange('notes')} maxLength={500} />
         </div>
-        {form.expires_at === '' && (
-          <p className="text-xs text-surface-500">No expiration date means this client never expires.</p>
-        )}
         {error && (
           <div className="rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm px-3 py-2">{error}</div>
         )}

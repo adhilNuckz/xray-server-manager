@@ -36,7 +36,7 @@ const getOne = asyncHandler(async (req, res) => {
 });
 
 const create = asyncHandler(async (req, res) => {
-  const { name, email, expires_at, notes, flow } = req.body || {};
+  const { name, email, expires_at, notes, flow, sni } = req.body || {};
   const cleanName = sanitizeName(name || email || '');
   if (!isSafeName(cleanName)) {
     return res.status(400).json({ error: 'Client name contains invalid characters' });
@@ -48,8 +48,9 @@ const create = asyncHandler(async (req, res) => {
       expires_at,
       notes: typeof notes === 'string' ? notes.slice(0, 500) : '',
       flow,
+      sni,
     });
-    audit.log(actor(req), 'client_created', { id: created.client.id, email: created.client.email }, req.ip);
+    audit.log(actor(req), 'client_created', { id: created.client.id, email: created.client.email, sni: created.client.sni }, req.ip);
     res.status(201).json({
       client: created.client,
       reloaded: created.reloaded !== false,

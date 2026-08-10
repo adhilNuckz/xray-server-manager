@@ -146,6 +146,7 @@ export default function Clients() {
                 <th className="px-4 py-3 font-medium">Name</th>
                 <th className="px-4 py-3 font-medium">UUID</th>
                 <th className="px-4 py-3 font-medium">Email</th>
+                <th className="px-4 py-3 font-medium">Data pack</th>
                 <th className="px-4 py-3 font-medium">Status</th>
                 <th className="px-4 py-3 font-medium">Created</th>
                 <th className="px-4 py-3 font-medium">Expires</th>
@@ -158,14 +159,14 @@ export default function Clients() {
             <tbody>
               {loading && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-8 text-center text-surface-500">
+                  <td colSpan={11} className="px-4 py-8 text-center text-surface-500">
                     Loading clients…
                   </td>
                 </tr>
               )}
               {!loading && filtered.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-8 text-center text-surface-500">
+                  <td colSpan={11} className="px-4 py-8 text-center text-surface-500">
                     No clients found.
                   </td>
                 </tr>
@@ -175,6 +176,9 @@ export default function Clients() {
                   <td className="px-4 py-3 font-medium text-surface-100 whitespace-nowrap">{c.name}</td>
                   <td className="px-4 py-3 font-mono text-xs text-surface-400">{c.id.slice(0, 8)}…</td>
                   <td className="px-4 py-3 text-surface-300">{c.email}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-surface-400 whitespace-nowrap" title={c.sni || ''}>
+                    {c.sni || '—'}
+                  </td>
                   <td className="px-4 py-3">
                     <StatusBadge status={c.status} />
                   </td>

@@ -271,6 +271,34 @@ function getRealityPublicKey(privateKey) {
   });
 }
 
+// Writes the allowed Reality serverNames list into every Reality VLESS
+// inbound. Does not change dest / privateKey / shortIds.
+async function syncRealityServerNames(serverNames) {
+  if (!Array.isArray(serverNames) || serverNames.length === 0) {
+    throw new Error('serverNames must be a non-empty array');
+  }
+  if (!configExists()) {
+    throw new Error(`Xray configuration not found at ${CONFIG_PATH}`);
+  }
+  const config = readConfig();
+  let touched = 0;
+  for (const ib of config.inbounds || []) {
+    if (
+      ib.protocol === 'vless' &&
+      ib.streamSettings &&
+      ib.streamSettings.security === 'reality' &&
+      ib.streamSettings.realitySettings
+    ) {
+      ib.streamSettings.realitySettings.serverNames = [...serverNames];
+      touched += 1;
+    }
+  }
+  if (touched === 0) {
+    throw new Error('No Reality VLESS inbound found to update serverNames');
+  }
+  return writeConfigSafely(config);
+}
+
 module.exports = {
   CONFIG_PATH,
   configExists,
@@ -285,4 +313,5 @@ module.exports = {
   deleteBackup,
   restoreBackup,
   getRealityPublicKey,
+  syncRealityServerNames,
 };

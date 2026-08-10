@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS clients (
   email         TEXT NOT NULL UNIQUE,    -- matches the "email" field in Xray config
   flow          TEXT NOT NULL DEFAULT 'xtls-rprx-vision',
   notes         TEXT DEFAULT '',
+  sni           TEXT NOT NULL DEFAULT '', -- preferred Reality SNI / data-pack domain for VLESS links
   enabled       INTEGER NOT NULL DEFAULT 1, -- 1 = enabled, 0 = disabled
   expires_at    TEXT,                    -- ISO date, nullable = never expires
   created_at    TEXT NOT NULL,
