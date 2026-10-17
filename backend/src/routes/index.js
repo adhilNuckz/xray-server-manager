@@ -2,6 +2,7 @@ const express = require('express');
 const { requireAuth, requireCsrf } = require('../middleware/auth');
 
 const authRoutes = require('./auth.routes');
+const publicRoutes = require('./public.routes');
 const clientsRoutes = require('./clients.routes');
 const statsRoutes = require('./stats.routes');
 const connectionsRoutes = require('./connections.routes');
@@ -12,8 +13,9 @@ const auditRoutes = require('./audit.routes');
 
 const router = express.Router();
 
-// Public (login/logout/me handle their own auth requirements internally).
+// Public (login/logout/me and public client usage/ping/speedtest).
 router.use('/auth', authRoutes);
+router.use('/public', publicRoutes);
 
 // Everything below requires an authenticated session.
 router.use('/clients', requireAuth, clientsRoutes);

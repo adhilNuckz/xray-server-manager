@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus, Search, Eye, Pencil, Link2, Ban, CheckCircle, Trash2, RefreshCw } from 'lucide-react';
+import { Plus, Search, Eye, Pencil, Link2, Ban, CheckCircle, Trash2, RefreshCw, Activity } from 'lucide-react';
 import api from '../services/api';
 import { usePageTitle } from '../context/PageTitleContext';
 import { useToast } from '../context/ToastContext';
@@ -193,6 +193,12 @@ export default function Clients() {
                     <div className="flex items-center justify-end gap-1">
                       <IconButton title="View" onClick={() => setDetailsClient(c)}>
                         <Eye size={15} />
+                      </IconButton>
+                      <IconButton
+                        title="Usage & Speed Portal"
+                        onClick={() => window.open(`/usage/${c.id}`, '_blank')}
+                      >
+                        <Activity size={15} className="text-cyan-400" />
                       </IconButton>
                       <IconButton title="Edit" onClick={() => openEdit(c)}>
                         <Pencil size={15} />

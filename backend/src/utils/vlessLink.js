@@ -26,8 +26,9 @@ function supportsFlow(inbound) {
 function describeInbound(inbound) {
   const stream = inbound.streamSettings || {};
   const rs = stream.realitySettings || {};
+  const port = Number(inbound.port) === 10443 ? 443 : inbound.port;
   return {
-    port: inbound.port,
+    port,
     tag: inbound.tag || null,
     network: stream.network || 'tcp',
     security: stream.security || 'none',
@@ -61,7 +62,7 @@ function buildVlessLink({ client, inbound, serverAddress, publicKey, defaultFlow
   if (!inbound) throw new Error('No VLESS inbound found in Xray configuration');
   if (!serverAddress) throw new Error('SERVER_ADDRESS is not configured - set vpn.solitways.online in Settings');
 
-  const port = inbound.port;
+  const port = Number(inbound.port) === 10443 ? 443 : inbound.port;
   const stream = inbound.streamSettings || {};
   const network = stream.network || 'tcp';
   const security = stream.security || 'none';

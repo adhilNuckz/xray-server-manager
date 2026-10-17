@@ -130,7 +130,7 @@ function readProfilesFromLiveConfig() {
       {
         id: tagId || slugify(firstSni),
         label: tagId ? tagId.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : firstSni,
-        port: ib.port,
+        port: Number(ib.port) === 10443 ? 443 : ib.port,
         dest: rs.dest || `${firstSni}:443`,
         serverNames: rs.serverNames || [firstSni],
       },
@@ -220,33 +220,36 @@ async function syncRealityInboundsToXray(profiles) {
   const clients = collectAnyVlessClients(config);
   const nonReality = (config.inbounds || []).filter((ib) => !isRealityVless(ib));
 
-  const realityInbounds = profiles.map((p) => ({
-    listen: '0.0.0.0',
-    port: p.port,
-    protocol: 'vless',
-    tag: `${TAG_PREFIX}${p.id}`,
-    settings: {
-      clients: clients.map((c) => {
-        const entry = { id: c.id };
-        if (c.email) entry.email = c.email;
-        if (c.flow) entry.flow = c.flow;
-        return entry;
-      }),
-      decryption: 'none',
-    },
-    streamSettings: {
-      network: 'tcp',
-      security: 'reality',
-      realitySettings: {
-        show: keys.show,
-        dest: p.dest,
-        xver: keys.xver,
-        serverNames: [...p.serverNames],
-        privateKey: keys.privateKey,
-        shortIds: [...keys.shortIds],
+  const realityInbounds = profiles.map((p) => {
+    const isPort443 = Number(p.port) === 443;
+    return {
+      listen: isPort443 ? '127.0.0.1' : '0.0.0.0',
+      port: isPort443 ? 10443 : p.port,
+      protocol: 'vless',
+      tag: `${TAG_PREFIX}${p.id}`,
+      settings: {
+        clients: clients.map((c) => {
+          const entry = { id: c.id };
+          if (c.email) entry.email = c.email;
+          if (c.flow) entry.flow = c.flow;
+          return entry;
+        }),
+        decryption: 'none',
       },
-    },
-  }));
+      streamSettings: {
+        network: 'tcp',
+        security: 'reality',
+        realitySettings: {
+          show: keys.show,
+          dest: p.dest,
+          xver: keys.xver,
+          serverNames: [...p.serverNames],
+          privateKey: keys.privateKey,
+          shortIds: [...keys.shortIds],
+        },
+      },
+    };
+  });
 
   config.inbounds = [...realityInbounds, ...nonReality];
   return xrayConfig.writeConfigSafely(config);

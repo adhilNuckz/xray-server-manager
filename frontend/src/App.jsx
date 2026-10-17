@@ -13,6 +13,7 @@ import Connections from './pages/Connections';
 import XrayConfigPage from './pages/XrayConfigPage';
 import Backups from './pages/Backups';
 import Settings from './pages/Settings';
+import ClientUsage from './pages/ClientUsage';
 
 export default function App() {
   return (
@@ -22,6 +23,7 @@ export default function App() {
           <BrowserRouter>
             <Routes>
               <Route path="/login" element={<Login />} />
+              <Route path="/usage/:id" element={<ClientUsage />} />
               <Route
                 path="/"
                 element={

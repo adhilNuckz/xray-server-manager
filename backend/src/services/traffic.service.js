@@ -8,8 +8,8 @@ const connections = require('./connections.service');
 const xrayConfig = require('./xrayConfig.service');
 const { findVlessInbounds } = require('../utils/vlessLink');
 
-const POLL_MS = 5000;
-const HISTORY_POINTS = 240; // 20 minutes at 5s resolution
+const POLL_MS = 1000; // 1-second real-time resolution
+const HISTORY_POINTS = 300; // 5 minutes at 1s resolution
 
 const INSERT_SNAPSHOT = db.prepare(`
   INSERT INTO traffic_snapshots (ts, scope, ref, uplink, downlink) VALUES (?, ?, ?, ?, ?)
@@ -21,7 +21,10 @@ const CLIENT_HISTORY = db.prepare(`
 
 const history = []; // ring buffer of { ts, rxSec, txSec, activeConnections, statsEnabled }
 let latestClientTraffic = {}; // email -> { uplink, downlink, total }
+let previousClientTraffic = {}; // email -> { uplink, downlink, ts }
+const clientSpeeds = {}; // email -> { upSpeed, downSpeed, history: [] }
 const sseClients = new Set();
+const clientSseClients = new Map(); // email -> Set<res>
 
 function pushHistory(point) {
   history.push(point);
@@ -35,6 +38,19 @@ function broadcast(point) {
       res.write(payload);
     } catch (_) {
       sseClients.delete(res);
+    }
+  }
+}
+
+function broadcastToClient(email, data) {
+  const set = clientSseClients.get(email);
+  if (!set || set.size === 0) return;
+  const payload = `data: ${JSON.stringify(data)}\n\n`;
+  for (const res of set) {
+    try {
+      res.write(payload);
+    } catch (_) {
+      set.delete(res);
     }
   }
 }
@@ -58,6 +74,7 @@ async function pollOnce() {
   const activeConnections = perPortCounts.reduce((sum, n) => sum + n, 0);
 
   const ts = new Date().toISOString();
+  const now = Date.now();
   const point = {
     ts,
     rxSec: net ? Math.round(net.rxSec) : 0,
@@ -72,6 +89,49 @@ async function pollOnce() {
 
   if (statsResult) {
     latestClientTraffic = statsResult.byEmail;
+
+    // Calculate per-client live speed and push to client history
+    Object.entries(statsResult.byEmail).forEach(([email, v]) => {
+      const prev = previousClientTraffic[email];
+      let upSpeed = 0;
+      let downSpeed = 0;
+      if (prev) {
+        const dt = Math.max(0.5, (now - prev.ts) / 1000);
+        if (v.uplink >= prev.uplink) {
+          upSpeed = Math.round((v.uplink - prev.uplink) / dt);
+        }
+        if (v.downlink >= prev.downlink) {
+          downSpeed = Math.round((v.downlink - prev.downlink) / dt);
+        }
+      }
+      previousClientTraffic[email] = { uplink: v.uplink, downlink: v.downlink, ts: now };
+
+      if (!clientSpeeds[email]) {
+        clientSpeeds[email] = { upSpeed: 0, downSpeed: 0, history: [] };
+      }
+      clientSpeeds[email].upSpeed = upSpeed;
+      clientSpeeds[email].downSpeed = downSpeed;
+      clientSpeeds[email].history.push({
+        ts,
+        upSpeed,
+        downSpeed,
+        uplink: v.uplink,
+        downlink: v.downlink,
+      });
+      if (clientSpeeds[email].history.length > 60) {
+        clientSpeeds[email].history.shift();
+      }
+
+      broadcastToClient(email, {
+        ts,
+        uplink: v.uplink,
+        downlink: v.downlink,
+        total: v.uplink + v.downlink,
+        upSpeed,
+        downSpeed,
+      });
+    });
+
     const insertMany = db.transaction(() => {
       INSERT_SNAPSHOT.run(ts, 'system', null, statsResult.system.uplink, statsResult.system.downlink);
       Object.entries(statsResult.byEmail).forEach(([email, v]) => {
@@ -105,20 +165,47 @@ function removeSseClient(res) {
   sseClients.delete(res);
 }
 
+function addClientSse(email, res) {
+  if (!clientSseClients.has(email)) {
+    clientSseClients.set(email, new Set());
+  }
+  clientSseClients.get(email).add(res);
+}
+
+function removeClientSse(email, res) {
+  const set = clientSseClients.get(email);
+  if (set) {
+    set.delete(res);
+    if (set.size === 0) clientSseClients.delete(email);
+  }
+}
+
+function getClientLiveSpeed(email) {
+  const s = clientSpeeds[email];
+  return {
+    upSpeed: s ? s.upSpeed : 0,
+    downSpeed: s ? s.downSpeed : 0,
+    speedHistory: s ? s.history : [],
+  };
+}
+
 function getAllClientTraffic() {
   const lastSeenMap = connections.getLastSeenAll();
   const result = {};
   Object.entries(latestClientTraffic).forEach(([email, v]) => {
+    const s = clientSpeeds[email] || { upSpeed: 0, downSpeed: 0 };
     result[email] = {
       uplink: v.uplink,
       downlink: v.downlink,
       total: v.uplink + v.downlink,
+      upSpeed: s.upSpeed,
+      downSpeed: s.downSpeed,
       lastSeen: lastSeenMap[email] || null,
     };
   });
   // Include clients with lastSeen but no traffic data yet (stats API just enabled)
   Object.entries(lastSeenMap).forEach(([email, lastSeen]) => {
-    if (!result[email]) result[email] = { uplink: 0, downlink: 0, total: 0, lastSeen };
+    if (!result[email]) result[email] = { uplink: 0, downlink: 0, total: 0, upSpeed: 0, downSpeed: 0, lastSeen };
   });
   return result;
 }
@@ -127,10 +214,14 @@ function getClientTraffic(email) {
   const current = latestClientTraffic[email] || { uplink: 0, downlink: 0 };
   const lastSeenMap = connections.getLastSeenAll();
   const rows = CLIENT_HISTORY.all(email);
+  const live = getClientLiveSpeed(email);
   return {
     uplink: current.uplink,
     downlink: current.downlink,
     total: current.uplink + current.downlink,
+    upSpeed: live.upSpeed,
+    downSpeed: live.downSpeed,
+    speedHistory: live.speedHistory,
     lastSeen: lastSeenMap[email] || null,
     history: rows,
   };
@@ -150,6 +241,9 @@ module.exports = {
   getHistory,
   addSseClient,
   removeSseClient,
+  addClientSse,
+  removeClientSse,
+  getClientLiveSpeed,
   getAllClientTraffic,
   getClientTraffic,
   getActiveConnectionCounts,

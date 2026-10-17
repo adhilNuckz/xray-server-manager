@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Copy, Check } from 'lucide-react';
+import { Copy, Check, ExternalLink } from 'lucide-react';
 import Modal from './Modal';
 import api from '../services/api';
 
@@ -17,6 +17,8 @@ export default function VlessLinkModal({ open, onClose, client }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copiedUsage, setCopiedUsage] = useState(false);
+  const usageUrl = client?.id ? `${window.location.origin}/usage/${client.id}` : '';
 
   useEffect(() => {
     if (open && client) {
@@ -33,6 +35,13 @@ export default function VlessLinkModal({ open, onClose, client }) {
   }, [open, client]);
 
   const active = links[activeIdx];
+
+  const copyUsage = async () => {
+    if (!usageUrl) return;
+    await navigator.clipboard.writeText(usageUrl);
+    setCopiedUsage(true);
+    setTimeout(() => setCopiedUsage(false), 2000);
+  };
 
   const copy = async () => {
     if (!active) return;
@@ -80,6 +89,33 @@ export default function VlessLinkModal({ open, onClose, client }) {
               <button className="btn-secondary shrink-0" onClick={copy}>
                 {copied ? <Check size={15} /> : <Copy size={15} />}
                 {copied ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+          </div>
+
+          <div className="pt-3 border-t border-surface-700/60">
+            <div className="flex items-center justify-between mb-1">
+              <label className="label mb-0">Client Usage & Speed Portal</label>
+              <a
+                href={usageUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs text-accent-400 hover:text-accent-300 flex items-center gap-1"
+              >
+                <ExternalLink size={12} />
+                Open
+              </a>
+            </div>
+            <div className="flex gap-2">
+              <input
+                readOnly
+                className="input font-mono text-xs text-accent-300"
+                value={usageUrl}
+                onFocus={(e) => e.target.select()}
+              />
+              <button className="btn-secondary shrink-0" onClick={copyUsage}>
+                {copiedUsage ? <Check size={15} /> : <Copy size={15} />}
+                {copiedUsage ? 'Copied' : 'Copy'}
               </button>
             </div>
           </div>
