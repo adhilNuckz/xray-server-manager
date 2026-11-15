@@ -96,6 +96,8 @@ async function bootstrap() {
     if (!cfg.log || !cfg.log.access || cfg.log.access === 'none') {
       try {
         fs.mkdirSync('/var/log/xray', { recursive: true });
+        const { execSync } = require('child_process');
+        execSync('chown -R xray:xray /var/log/xray 2>/dev/null && chmod 755 /var/log/xray 2>/dev/null || true');
       } catch (_) {}
       cfg.log = cfg.log || {};
       cfg.log.access = '/var/log/xray/access.log';
