@@ -18,6 +18,9 @@ import { usePageTitle } from '../context/PageTitleContext';
 import StatCard from '../components/StatCard';
 import BandwidthChart from '../components/BandwidthChart';
 import ConnectionsChart from '../components/ConnectionsChart';
+import ActiveUsersCard from '../components/ActiveUsersCard';
+import RealtimeConnectionLog from '../components/RealtimeConnectionLog';
+import GlobalXrayLog from '../components/GlobalXrayLog';
 import useTrafficStream from '../hooks/useTrafficStream';
 import { formatBytes, formatBitsPerSecond, formatUptime, timeAgo } from '../utils/format';
 
@@ -25,6 +28,7 @@ export default function Dashboard() {
   usePageTitle('Dashboard');
   const [overview, setOverview] = useState(null);
   const [auditLogs, setAuditLogs] = useState([]);
+  const [selectedIp, setSelectedIp] = useState(null);
   const { points } = useTrafficStream(60);
 
   useEffect(() => {
@@ -124,6 +128,24 @@ export default function Dashboard() {
           <h3 className="text-sm font-semibold text-surface-200 mb-2">Active connections</h3>
           <ConnectionsChart data={points} />
         </div>
+      </div>
+
+      {/* Connected Users & Real-Time Connection Logs */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+        <div className="lg:col-span-5">
+          <ActiveUsersCard selectedIp={selectedIp} onSelectIp={setSelectedIp} />
+        </div>
+        <div className="lg:col-span-7">
+          <RealtimeConnectionLog
+            selectedIp={selectedIp}
+            onClearIpFilter={() => setSelectedIp(null)}
+          />
+        </div>
+      </div>
+
+      {/* Global Xray Log */}
+      <div>
+        <GlobalXrayLog />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

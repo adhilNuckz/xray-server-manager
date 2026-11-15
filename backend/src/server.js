@@ -89,6 +89,25 @@ async function bootstrap() {
     console.error('[startup] Failed to sync clients into Xray config:', err.message);
   }
 
+  // Ensure Xray access and error logging are configured so real-time connection monitoring works
+  try {
+    const xrayConfig = require('./services/xrayConfig.service');
+    const cfg = xrayConfig.readConfig();
+    if (!cfg.log || !cfg.log.access || cfg.log.access === 'none') {
+      try {
+        fs.mkdirSync('/var/log/xray', { recursive: true });
+      } catch (_) {}
+      cfg.log = cfg.log || {};
+      cfg.log.access = '/var/log/xray/access.log';
+      cfg.log.error = cfg.log.error || '/var/log/xray/error.log';
+      cfg.log.loglevel = cfg.log.loglevel || 'warning';
+      await xrayConfig.writeConfigSafely(cfg);
+      console.log('[startup] Configured Xray access and error logging');
+    }
+  } catch (err) {
+    console.warn('[startup] Note on Xray access log:', err.message);
+  }
+
   connectionsService.start();
   trafficService.start();
   monitorService.start();

@@ -315,9 +315,28 @@ fi
 INITIAL_CLIENT_ID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || openssl rand -hex 16)
 
 mkdir -p /usr/local/etc/xray
+mkdir -p /var/log/xray
+chown -R xray:xray /var/log/xray 2>/dev/null || true
+chmod 755 /var/log/xray 2>/dev/null || true
+
+# Setup logrotate for Xray logs to prevent disk growth
+cat > /etc/logrotate.d/xray << 'EOF'
+/var/log/xray/*.log {
+    daily
+    rotate 7
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+}
+EOF
+
 cat > /usr/local/etc/xray/config.json << EOF
 {
   "log": {
+    "access": "/var/log/xray/access.log",
+    "error": "/var/log/xray/error.log",
     "loglevel": "warning"
   },
   "inbounds": [

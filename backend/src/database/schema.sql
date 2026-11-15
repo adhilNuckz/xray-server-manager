@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS connection_events (
 
 CREATE INDEX IF NOT EXISTS idx_conn_ts ON connection_events (ts);
 CREATE INDEX IF NOT EXISTS idx_conn_email ON connection_events (email);
+CREATE INDEX IF NOT EXISTS idx_conn_source_ip ON connection_events (source_ip);
 
 CREATE TABLE IF NOT EXISTS settings (
   key           TEXT PRIMARY KEY,

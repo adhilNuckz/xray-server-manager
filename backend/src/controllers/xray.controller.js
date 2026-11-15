@@ -91,4 +91,12 @@ const enableAccessLog = asyncHandler(async (req, res) => {
   }
 });
 
-module.exports = { status, start, stop, restart, reload, validate, getConfig, saveConfig, enableAccessLog };
+const getLogs = asyncHandler(async (req, res) => {
+  const type = req.query.type || 'service';
+  const lines = req.query.lines || 100;
+  const filter = req.query.filter || null;
+  const data = await xrayProcess.getLogs({ type, lines, filter });
+  res.json(data);
+});
+
+module.exports = { status, start, stop, restart, reload, validate, getConfig, saveConfig, enableAccessLog, getLogs };

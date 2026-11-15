@@ -13,5 +13,6 @@ router.post('/validate', requireCsrf, ctrl.validate);
 router.get('/config', ctrl.getConfig);
 router.put('/config', requireCsrf, ctrl.saveConfig);
 router.post('/enable-access-log', requireCsrf, ctrl.enableAccessLog);
+router.get('/logs', ctrl.getLogs);
 
 module.exports = router;

@@ -1,5 +1,6 @@
 // Controls the Xray systemd service. Every call uses execFile with a fixed
 // argument array - user input is never concatenated into a shell command.
+const fs = require('fs');
 const { execFile } = require('child_process');
 const env = require('../config/env');
 
@@ -58,4 +59,45 @@ async function reload() {
   return result;
 }
 
-module.exports = { status, start, stop, restart, reload, SERVICE };
+async function getLogs({ type = 'service', lines = 100, filter = null } = {}) {
+  const safeLines = Math.min(Math.max(parseInt(lines, 10) || 100, 10), 300);
+  let rawText = '';
+
+  if (type === 'access') {
+    const accessPath = '/var/log/xray/access.log';
+    if (fs.existsSync(accessPath)) {
+      const res = await run('tail', ['-n', String(safeLines), accessPath]);
+      rawText = res.stdout;
+    } else {
+      rawText = 'Access log file does not exist yet (/var/log/xray/access.log).';
+    }
+  } else if (type === 'error') {
+    const errorPath = '/var/log/xray/error.log';
+    if (fs.existsSync(errorPath)) {
+      const res = await run('tail', ['-n', String(safeLines), errorPath]);
+      rawText = res.stdout;
+    } else {
+      rawText = 'Error log file does not exist yet (/var/log/xray/error.log).';
+    }
+  } else {
+    // Default: systemd service log via journalctl
+    const res = await run('journalctl', ['-u', SERVICE, '-n', String(safeLines), '--no-pager']);
+    rawText = res.stdout || res.stderr;
+  }
+
+  let lineArray = rawText ? rawText.split('\n') : [];
+  if (filter && typeof filter === 'string' && filter.trim()) {
+    const q = filter.trim().toLowerCase();
+    lineArray = lineArray.filter((l) => l.toLowerCase().includes(q));
+  }
+
+  return {
+    type,
+    lines: lineArray.length,
+    requestedLines: safeLines,
+    logs: lineArray,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+module.exports = { status, start, stop, restart, reload, getLogs, SERVICE };

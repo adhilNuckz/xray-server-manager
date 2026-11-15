@@ -19,7 +19,7 @@ const LAST_SEEN_ALL = db.prepare(`
 `);
 
 const LOG_LINE_RE =
-  /^(\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2})[^\n]*?from\s+([0-9a-fA-F:.[\]]+):\d+\s+accepted\s+(\S+)(?:.*?email:\s*(\S+))?/;
+  /(\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2})[^\n]*?(?:from\s+)?([0-9a-fA-F:.[\]]+):\d+\s+accepted\s+(\S+)(?:.*?email:\s*(\S+))?/;
 
 let watchedPath = null;
 let readOffset = 0;
@@ -43,6 +43,10 @@ function processNewLines(text) {
     const match = LOG_LINE_RE.exec(line);
     if (!match) continue;
     const [, , sourceIp, destination, email] = match;
+    // Skip internal API queries between backend and xray stats inbound
+    if (sourceIp === '127.0.0.1' && destination && destination.includes('10085')) {
+      continue;
+    }
     events.push({
       ts: new Date().toISOString(),
       email: email || null,
@@ -101,13 +105,32 @@ function start() {
 function getActiveConnectionCounts() {
   const cutoff = new Date(Date.now() - ACTIVE_WINDOW_MS).toISOString();
   const rows = db
-    .prepare(`SELECT email, COUNT(DISTINCT source_ip) as cnt FROM connection_events WHERE ts >= ? AND email IS NOT NULL GROUP BY email`)
+    .prepare(`SELECT email, COUNT(DISTINCT source_ip) as cnt FROM connection_events WHERE ts >= ? AND email IS NOT NULL AND source_ip != '127.0.0.1' GROUP BY email`)
     .all(cutoff);
   const map = {};
   rows.forEach((r) => {
     map[r.email] = r.cnt;
   });
   return map;
+}
+
+function getActiveConnections(windowMs = ACTIVE_WINDOW_MS) {
+  const cutoff = new Date(Date.now() - windowMs).toISOString();
+  return db
+    .prepare(`
+      SELECT 
+        email, 
+        source_ip, 
+        MAX(ts) as last_seen, 
+        destination, 
+        COUNT(*) as count 
+      FROM connection_events 
+      WHERE ts >= ? AND email IS NOT NULL AND source_ip != '127.0.0.1'
+      GROUP BY email, source_ip 
+      ORDER BY last_seen DESC 
+      LIMIT 100
+    `)
+    .all(cutoff);
 }
 
 function getLastSeenAll() {
@@ -127,6 +150,28 @@ function getRecentAll(limit = 200) {
   return RECENT_ALL.all().slice(0, limit);
 }
 
+function getEvents({ ip, email, limit = 50 } = {}) {
+  const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);
+  if (ip && email) {
+    return db
+      .prepare(`SELECT * FROM connection_events WHERE source_ip = ? AND email = ? ORDER BY ts DESC LIMIT ?`)
+      .all(ip, email, safeLimit);
+  }
+  if (ip) {
+    return db
+      .prepare(`SELECT * FROM connection_events WHERE source_ip = ? ORDER BY ts DESC LIMIT ?`)
+      .all(ip, safeLimit);
+  }
+  if (email) {
+    return db
+      .prepare(`SELECT * FROM connection_events WHERE email = ? ORDER BY ts DESC LIMIT ?`)
+      .all(email, safeLimit);
+  }
+  return db
+    .prepare(`SELECT * FROM connection_events ORDER BY ts DESC LIMIT ?`)
+    .all(safeLimit);
+}
+
 function isAccessLogAvailable() {
   return getAccessLogPath() !== null;
 }
@@ -134,9 +179,11 @@ function isAccessLogAvailable() {
 module.exports = {
   start,
   getActiveConnectionCounts,
+  getActiveConnections,
   getLastSeenAll,
   getRecentForEmail,
   getRecentAll,
+  getEvents,
   isAccessLogAvailable,
   getAccessLogPath,
 };
