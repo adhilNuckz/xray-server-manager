@@ -19,17 +19,18 @@ Built with:
 
 1. [Architecture overview](#architecture-overview)
 2. [Important limitations (read this)](#important-limitations-read-this)
-3. [Fresh Ubuntu/Debian installation](#fresh-ubuntudebian-installation)
-4. [Configuration (.env)](#configuration-env)
-5. [Running with PM2](#running-with-pm2)
-6. [AWS Security Group / UFW](#aws-security-group--ufw)
-7. [Xray permissions & TLS/reality keys](#xray-permissions--tlsreality-keys)
-8. [Enabling traffic stats & connection monitoring](#enabling-traffic-stats--connection-monitoring)
-9. [Backups & safety model](#backups--safety-model)
-10. [API reference](#api-reference)
-11. [Local development](#local-development)
-12. [Troubleshooting](#troubleshooting)
-13. [Manual test checklist](#manual-test-checklist-performed)
+3. [Quick 1-Line Automated Installation (Recommended)](#quick-1-line-automated-installation-recommended)
+4. [Manual Ubuntu/Debian installation](#manual-ubuntudebian-installation)
+5. [Configuration (.env)](#configuration-env)
+6. [Running with PM2](#running-with-pm2)
+7. [AWS Security Group / UFW](#aws-security-group--ufw)
+8. [Xray permissions & TLS/reality keys](#xray-permissions--tlsreality-keys)
+9. [Enabling traffic stats & connection monitoring](#enabling-traffic-stats--connection-monitoring)
+10. [Backups & safety model](#backups--safety-model)
+11. [API reference](#api-reference)
+12. [Local development](#local-development)
+13. [Troubleshooting](#troubleshooting)
+14. [Manual test checklist](#manual-test-checklist-performed)
 
 ---
 
@@ -168,7 +169,33 @@ database (for history/reporting) — they are simply no longer written into
 
 ---
 
-## Fresh Ubuntu/Debian installation
+## Quick 1-Line Automated Installation (Recommended)
+
+For a fresh Ubuntu (20.04/22.04/24.04) or Debian (11+) server, run the single-line installer as `root`:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/adhilNuckz/xray-server-manager/main/install.sh)
+```
+
+The script interactively prompts you for:
+- **Subdomain / Domain:** (e.g. `xray.yourdomain.com` pointed to your server IP via an `A` record)
+- **Admin Username:** (default: `admin`)
+- **Admin Password:** (enter your custom password or press Enter to generate a secure random one)
+- **Panel Internal Port:** (default: `5252`)
+
+#### What the automated installer does:
+1. **Packages & Dependencies:** Installs `Node.js 20.x`, `PM2`, `Xray-core`, `Nginx` (with stream module), `Certbot`, and build tools.
+2. **Firewall:** Automatically configures UFW and Oracle Cloud / Linux `iptables` to allow ports `80`, `443`, `5252`, and `8443:8450`.
+3. **Let's Encrypt SSL:** Requests a genuine TLS certificate for your pointed subdomain.
+4. **Nginx SNI Preread Multiplexer:** Configures Nginx stream multiplexing on port `443`:
+   - Connecting with SNI matching your subdomain serves the HTTPS Web Management Panel.
+   - Connecting with other SNIs (e.g. `support.zoom.us`) routes directly into Xray VLESS Reality.
+5. **Xray-Core Setup:** Configures `/usr/local/etc/xray/config.json` with multi-pack Reality inbounds (Zoom `443`/`10443`, YouTube `8445`, Facebook `8446`/`8447`, WhatsApp `8448`, Dokodemo Stats API `10085`).
+6. **Panel Build & PM2:** Clones/builds the frontend & backend, provisions database settings, starts the panel under PM2, and configures auto-start on server reboot (`pm2 startup`).
+
+---
+
+## Manual Ubuntu/Debian installation
 
 Run these on the same server where Xray is already installed (assumes
 Xray is already installed and its systemd service is named `xray`).
