@@ -317,6 +317,10 @@ async function deleteClient(id) {
   stmts.delete.run(id);
   try {
     await applyClientsToConfig();
+    try {
+      const trafficService = require('./traffic.service');
+      trafficService.deleteClientTraffic(existing.email);
+    } catch (_) {}
   } catch (err) {
     stmts.insert.run({ ...existing, sni: existing.sni || '', notes: existing.notes || '' }); // rollback
     throw err;

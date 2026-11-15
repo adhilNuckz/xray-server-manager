@@ -29,6 +29,16 @@ CREATE TABLE IF NOT EXISTS traffic_snapshots (
 CREATE INDEX IF NOT EXISTS idx_traffic_ts ON traffic_snapshots (ts);
 CREATE INDEX IF NOT EXISTS idx_traffic_scope_ref ON traffic_snapshots (scope, ref);
 
+-- Persistent cumulative traffic counters that survive Xray restarts, client mutations and server reboots
+CREATE TABLE IF NOT EXISTS client_traffic_totals (
+  email         TEXT PRIMARY KEY,
+  uplink        INTEGER NOT NULL DEFAULT 0,
+  downlink      INTEGER NOT NULL DEFAULT 0,
+  last_raw_up   INTEGER NOT NULL DEFAULT 0,
+  last_raw_down INTEGER NOT NULL DEFAULT 0,
+  updated_at    TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS connection_events (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   ts            TEXT NOT NULL,

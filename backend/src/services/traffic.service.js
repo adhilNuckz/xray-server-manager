@@ -11,6 +11,18 @@ const { findVlessInbounds } = require('../utils/vlessLink');
 const POLL_MS = 1000; // 1-second real-time resolution
 const HISTORY_POINTS = 300; // 5 minutes at 1s resolution
 
+// Ensure persistent table exists
+db.exec(`
+  CREATE TABLE IF NOT EXISTS client_traffic_totals (
+    email         TEXT PRIMARY KEY,
+    uplink        INTEGER NOT NULL DEFAULT 0,
+    downlink      INTEGER NOT NULL DEFAULT 0,
+    last_raw_up   INTEGER NOT NULL DEFAULT 0,
+    last_raw_down INTEGER NOT NULL DEFAULT 0,
+    updated_at    TEXT NOT NULL
+  )
+`);
+
 const INSERT_SNAPSHOT = db.prepare(`
   INSERT INTO traffic_snapshots (ts, scope, ref, uplink, downlink) VALUES (?, ?, ?, ?, ?)
 `);
@@ -18,13 +30,76 @@ const PRUNE_SNAPSHOTS = db.prepare(`DELETE FROM traffic_snapshots WHERE ts < ?`)
 const CLIENT_HISTORY = db.prepare(`
   SELECT ts, uplink, downlink FROM traffic_snapshots WHERE scope = 'client' AND ref = ? ORDER BY ts ASC LIMIT 500
 `);
+const LOAD_TOTALS = db.prepare('SELECT email, uplink, downlink, last_raw_up, last_raw_down FROM client_traffic_totals');
+const UPSERT_TOTAL = db.prepare(`
+  INSERT INTO client_traffic_totals (email, uplink, downlink, last_raw_up, last_raw_down, updated_at)
+  VALUES (@email, @uplink, @downlink, @lastRawUp, @lastRawDown, @updatedAt)
+  ON CONFLICT(email) DO UPDATE SET
+    uplink = excluded.uplink,
+    downlink = excluded.downlink,
+    last_raw_up = excluded.last_raw_up,
+    last_raw_down = excluded.last_raw_down,
+    updated_at = excluded.updated_at
+`);
+const DELETE_TOTAL = db.prepare('DELETE FROM client_traffic_totals WHERE email = ?');
 
 const history = []; // ring buffer of { ts, rxSec, txSec, activeConnections, statsEnabled }
+const cumulativeClientTraffic = {}; // email -> { uplink, downlink, lastRawUp, lastRawDown }
 let latestClientTraffic = {}; // email -> { uplink, downlink, total }
 let previousClientTraffic = {}; // email -> { uplink, downlink, ts }
 const clientSpeeds = {}; // email -> { upSpeed, downSpeed, history: [] }
 const sseClients = new Set();
 const clientSseClients = new Map(); // email -> Set<res>
+
+// Load stored cumulative totals on startup so traffic counts survive server/panel reboots
+function loadStoredTotals() {
+  try {
+    const countRow = db.prepare('SELECT count(*) as count FROM client_traffic_totals').get();
+    if (countRow && countRow.count === 0) {
+      try {
+        const rows = db.prepare(`
+          SELECT ref as email, MAX(uplink) as max_up, MAX(downlink) as max_down
+          FROM traffic_snapshots
+          WHERE scope = 'client' AND ref IS NOT NULL AND (uplink > 0 OR downlink > 0)
+          GROUP BY ref
+        `).all();
+        const now = new Date().toISOString();
+        for (const r of rows) {
+          if (r.email) {
+            UPSERT_TOTAL.run({
+              email: r.email,
+              uplink: Number(r.max_up) || 0,
+              downlink: Number(r.max_down) || 0,
+              lastRawUp: 0,
+              lastRawDown: 0,
+              updatedAt: now,
+            });
+          }
+        }
+      } catch (_) {}
+    }
+
+    const rows = LOAD_TOTALS.all();
+    for (const r of rows) {
+      const up = Number(r.uplink) || 0;
+      const down = Number(r.downlink) || 0;
+      cumulativeClientTraffic[r.email] = {
+        uplink: up,
+        downlink: down,
+        lastRawUp: Number(r.last_raw_up) || 0,
+        lastRawDown: Number(r.last_raw_down) || 0,
+      };
+      latestClientTraffic[r.email] = {
+        uplink: up,
+        downlink: down,
+        total: up + down,
+      };
+    }
+  } catch (err) {
+    console.error('[traffic] Failed to load stored client traffic totals:', err);
+  }
+}
+loadStoredTotals();
 
 function pushHistory(point) {
   history.push(point);
@@ -88,23 +163,84 @@ async function pollOnce() {
   broadcast(point);
 
   if (statsResult) {
-    latestClientTraffic = statsResult.byEmail;
+    const clientsToUpdate = [];
 
-    // Calculate per-client live speed and push to client history
+    // Accumulate per-client traffic monotonically
     Object.entries(statsResult.byEmail).forEach(([email, v]) => {
+      const rawUp = Number(v.uplink) || 0;
+      const rawDown = Number(v.downlink) || 0;
+
+      let item = cumulativeClientTraffic[email];
+      if (!item) {
+        item = {
+          uplink: rawUp,
+          downlink: rawDown,
+          lastRawUp: rawUp,
+          lastRawDown: rawDown,
+        };
+        cumulativeClientTraffic[email] = item;
+        clientsToUpdate.push({ email, item });
+      } else {
+        let changed = false;
+
+        // Uplink delta calculation (handles restarts & newly created clients)
+        let deltaUp = 0;
+        if (rawUp >= item.lastRawUp) {
+          deltaUp = rawUp - item.lastRawUp;
+        } else {
+          // Xray restarted => raw counter reset to 0
+          deltaUp = rawUp;
+        }
+        if (deltaUp > 0) {
+          item.uplink += deltaUp;
+          changed = true;
+        }
+        item.lastRawUp = rawUp;
+
+        // Downlink delta calculation (handles restarts & newly created clients)
+        let deltaDown = 0;
+        if (rawDown >= item.lastRawDown) {
+          deltaDown = rawDown - item.lastRawDown;
+        } else {
+          // Xray restarted => raw counter reset to 0
+          deltaDown = rawDown;
+        }
+        if (deltaDown > 0) {
+          item.downlink += deltaDown;
+          changed = true;
+        }
+        item.lastRawDown = rawDown;
+
+        if (changed) {
+          clientsToUpdate.push({ email, item });
+        }
+      }
+
+      // Live cumulative totals for consumers
+      latestClientTraffic[email] = {
+        uplink: item.uplink,
+        downlink: item.downlink,
+        total: item.uplink + item.downlink,
+      };
+
+      // Calculate per-client live speed using raw deltas
       const prev = previousClientTraffic[email];
       let upSpeed = 0;
       let downSpeed = 0;
       if (prev) {
         const dt = Math.max(0.5, (now - prev.ts) / 1000);
-        if (v.uplink >= prev.uplink) {
-          upSpeed = Math.round((v.uplink - prev.uplink) / dt);
+        if (rawUp >= prev.uplink) {
+          upSpeed = Math.round((rawUp - prev.uplink) / dt);
+        } else {
+          upSpeed = Math.round(rawUp / dt);
         }
-        if (v.downlink >= prev.downlink) {
-          downSpeed = Math.round((v.downlink - prev.downlink) / dt);
+        if (rawDown >= prev.downlink) {
+          downSpeed = Math.round((rawDown - prev.downlink) / dt);
+        } else {
+          downSpeed = Math.round(rawDown / dt);
         }
       }
-      previousClientTraffic[email] = { uplink: v.uplink, downlink: v.downlink, ts: now };
+      previousClientTraffic[email] = { uplink: rawUp, downlink: rawDown, ts: now };
 
       if (!clientSpeeds[email]) {
         clientSpeeds[email] = { upSpeed: 0, downSpeed: 0, history: [] };
@@ -115,8 +251,8 @@ async function pollOnce() {
         ts,
         upSpeed,
         downSpeed,
-        uplink: v.uplink,
-        downlink: v.downlink,
+        uplink: item.uplink,
+        downlink: item.downlink,
       });
       if (clientSpeeds[email].history.length > 60) {
         clientSpeeds[email].history.shift();
@@ -124,9 +260,9 @@ async function pollOnce() {
 
       broadcastToClient(email, {
         ts,
-        uplink: v.uplink,
-        downlink: v.downlink,
-        total: v.uplink + v.downlink,
+        uplink: item.uplink,
+        downlink: item.downlink,
+        total: item.uplink + item.downlink,
         upSpeed,
         downSpeed,
       });
@@ -134,9 +270,19 @@ async function pollOnce() {
 
     const insertMany = db.transaction(() => {
       INSERT_SNAPSHOT.run(ts, 'system', null, statsResult.system.uplink, statsResult.system.downlink);
-      Object.entries(statsResult.byEmail).forEach(([email, v]) => {
+      Object.entries(latestClientTraffic).forEach(([email, v]) => {
         INSERT_SNAPSHOT.run(ts, 'client', email, v.uplink, v.downlink);
       });
+      for (const { email, item } of clientsToUpdate) {
+        UPSERT_TOTAL.run({
+          email,
+          uplink: item.uplink,
+          downlink: item.downlink,
+          lastRawUp: item.lastRawUp,
+          lastRawDown: item.lastRawDown,
+          updatedAt: ts,
+        });
+      }
     });
     insertMany();
   }
@@ -236,6 +382,45 @@ function isStatsApiEnabled() {
   return last ? last.statsApiEnabled : false;
 }
 
+function deleteClientTraffic(email) {
+  if (!email) return;
+  delete cumulativeClientTraffic[email];
+  delete latestClientTraffic[email];
+  delete previousClientTraffic[email];
+  delete clientSpeeds[email];
+  try {
+    DELETE_TOTAL.run(email);
+  } catch (_) {}
+}
+
+function resetClientTraffic(email) {
+  if (!email) return;
+  const raw = previousClientTraffic[email] || { uplink: 0, downlink: 0 };
+  const rawUp = raw.uplink || 0;
+  const rawDown = raw.downlink || 0;
+  cumulativeClientTraffic[email] = {
+    uplink: 0,
+    downlink: 0,
+    lastRawUp: rawUp,
+    lastRawDown: rawDown,
+  };
+  latestClientTraffic[email] = {
+    uplink: 0,
+    downlink: 0,
+    total: 0,
+  };
+  try {
+    UPSERT_TOTAL.run({
+      email,
+      uplink: 0,
+      downlink: 0,
+      lastRawUp: rawUp,
+      lastRawDown: rawDown,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (_) {}
+}
+
 module.exports = {
   start,
   getHistory,
@@ -248,4 +433,6 @@ module.exports = {
   getClientTraffic,
   getActiveConnectionCounts,
   isStatsApiEnabled,
+  deleteClientTraffic,
+  resetClientTraffic,
 };
