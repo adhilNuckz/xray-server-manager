@@ -627,6 +627,29 @@ set.run("reality_inbounds", JSON.stringify([
   {"id":"fb-2cb8","label":"Fb 2cb8","port":8447,"dest":"web.facebook.com:443","serverNames":["web.facebook.com"]},
   {"id":"airtelpack","label":"Airtelpack","port":8448,"dest":"whatsapp.net:443","serverNames":["whatsapp.net"]}
 ]));
+
+// Auto-detect server GeoIP location
+try {
+  const http = require("http");
+  http.get("http://ip-api.com/json/", { timeout: 3000 }, (res) => {
+    let raw = "";
+    res.on("data", (c) => raw += c);
+    res.on("end", () => {
+      try {
+        const d = JSON.parse(raw);
+        if (d.status === "success" && d.country) {
+          set.run("server_country", d.country);
+          set.run("server_country_code", d.countryCode || "");
+          set.run("server_city", d.city || "");
+          const flag = d.countryCode
+            ? d.countryCode.toUpperCase().replace(/./g, (c) => String.fromCodePoint(127397 + c.charCodeAt(0)))
+            : "🌐";
+          set.run("server_flag", flag);
+        }
+      } catch (_) {}
+    });
+  }).on("error", () => {});
+} catch (_) {}
 ' SUBDOMAIN="${SUBDOMAIN}" 2>/dev/null || true
 
 # Start with PM2

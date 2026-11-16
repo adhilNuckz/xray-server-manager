@@ -110,6 +110,41 @@ async function bootstrap() {
     console.warn('[startup] Note on Xray access log:', err.message);
   }
 
+  // Auto-detect server country & city if not yet configured
+  try {
+    const settings = require('./services/settings.service');
+    if (!settings.get('server_country')) {
+      const http = require('http');
+      http
+        .get('http://ip-api.com/json/', { timeout: 4000 }, (res) => {
+          let raw = '';
+          res.on('data', (chunk) => {
+            raw += chunk;
+          });
+          res.on('end', () => {
+            try {
+              const data = JSON.parse(raw);
+              if (data.status === 'success' && data.country) {
+                settings.set('server_country', data.country);
+                settings.set('server_country_code', data.countryCode || '');
+                settings.set('server_city', data.city || '');
+                const flag = data.countryCode
+                  ? data.countryCode
+                      .toUpperCase()
+                      .replace(/./g, (c) => String.fromCodePoint(127397 + c.charCodeAt(0)))
+                  : '🌐';
+                settings.set('server_flag', flag);
+                console.log(`[startup] Auto-detected server location: ${data.city}, ${data.country} (${data.countryCode})`);
+              }
+            } catch (_) {}
+          });
+        })
+        .on('error', () => {});
+    }
+  } catch (err) {
+    console.warn('[startup] GeoIP detection skipped:', err.message);
+  }
+
   connectionsService.start();
   trafficService.start();
   monitorService.start();
